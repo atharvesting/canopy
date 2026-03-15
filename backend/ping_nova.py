@@ -8,7 +8,7 @@ def check_bedrock_access():
     
     try:
         response = client.converse(
-            modelId='amazon.nova-2-lite-v1:0',
+            modelId='amazon.nova-lite-v1:0',
             messages=[{'role': 'user', 'content': [{'text': 'Hello, are you online?'}]}]
         )
         print("\n✅ SUCCESS! AWS Sandbox is lifted. Model says:")
