@@ -1,0 +1,57 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  Backend for saving Web Push subscriptions and geolocation to DynamoDB.
+
+Globals:
+  Function:
+    Timeout: 10
+    Tracing: Active
+  Api:
+    Cors:
+      AllowMethods: "'POST, OPTIONS'"
+      AllowHeaders: "'Content-Type'"
+      AllowOrigin: "'*'"
+
+Resources:
+  SubscriptionTable:
+    Type: AWS::Serverless::SimpleTable
+    Properties:
+      PrimaryKey:
+        Name: id
+        Type: String
+      ProvisionedThroughput:
+        ReadCapacityUnits: 1
+        WriteCapacityUnits: 1
+
+  SaveSubscriptionFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: src/
+      Handler: app.lambda_handler
+      Runtime: python3.11
+      Architectures:
+        - x86_64
+      Environment:
+        Variables:
+          TABLE_NAME: !Ref SubscriptionTable
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref SubscriptionTable
+      Events:
+        SaveSubscription:
+          Type: Api
+          Properties:
+            Path: /subscription
+            Method: post
+
+Outputs:
+  ApiUrl:
+    Description: "API Gateway endpoint URL for Prod stage"
+    Value: !Sub "https://${ServerlessRestApi}.execute-api.${AWS::Region}.amazonaws.com/Prod/subscription/"
+  SaveSubscriptionFunction:
+    Description: "Save Subscription Lambda Function ARN"
+    Value: !GetAtt SaveSubscriptionFunction.Arn
+  SaveSubscriptionFunctionIamRole:
+    Description: "Implicit IAM Role created for Save Subscription function"
+    Value: !GetAtt SaveSubscriptionFunctionRole.Arn

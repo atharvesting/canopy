@@ -1,0 +1,6 @@
+boto3
+xarray
+s3fs
+zarr
+pywebpush
+matplotlib
