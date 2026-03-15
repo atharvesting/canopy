@@ -52,22 +52,30 @@ export default function PushNotification({
       // 2. Request Notification Permissions
       let pushSubscription = null;
       if ('Notification' in window && 'serviceWorker' in navigator && 'PushManager' in window) {
-        const perm = await Notification.requestPermission();
-        setNotificationStatus(perm === 'granted' ? 'Granted' : 'Denied');
+        try {
+          const perm = await Notification.requestPermission();
+          setNotificationStatus(perm === 'granted' ? 'Granted' : 'Denied');
 
-        if (perm === 'granted') {
-          // 3. Subscribe to Push Manager
-          const registration = await navigator.serviceWorker.getRegistration();
-          if (registration) {
-            const publicVapidKey = 'BEl62iUYgUivxIkv69yViEuiBIa-Ib9-SkvMeAtA3LFgDzkrxZJjSgSnfckjBJuBkr3qBUYIHBQFLXYpPNs_Z2s';
-            
-            pushSubscription = await registration.pushManager.subscribe({
-              userVisibleOnly: true,
-              applicationServerKey: urlBase64ToUint8Array(publicVapidKey)
-            });
-          } else {
-            console.warn('No service worker registration found. Skipping push subscription.');
+          if (perm === 'granted') {
+            // 3. Subscribe to Push Manager
+            const registration = await navigator.serviceWorker.getRegistration();
+            if (registration) {
+              const publicVapidKey = 'BEl62iUYgUivxIkv69yViEuiBIa-Ib9-SkvMeAtA3LFgDzkrxZJjSgSnfckjBJuBkr3qBUYIHBQFLXYpPNs_Z2s';
+              
+              try {
+                pushSubscription = await registration.pushManager.subscribe({
+                  userVisibleOnly: true,
+                  applicationServerKey: urlBase64ToUint8Array(publicVapidKey)
+                });
+              } catch (pushErr) {
+                console.warn('Push subscription failed (expected without DynamoDB), continuing anyway:', pushErr);
+              }
+            } else {
+              console.warn('No service worker registration found. Skipping push subscription.');
+            }
           }
+        } catch (err) {
+          console.warn('Notification permission issue:', err);
         }
       } else {
         setNotificationStatus('Unsupported');
@@ -98,7 +106,7 @@ export default function PushNotification({
       });
       
       if (!response.ok) {
-        throw new Error(`Local FastAPI Server Error: ${response.status}`);
+        throw new Error(`Edge API Server Error: ${response.status}`);
       }
       
       const apiResult = await response.json();
@@ -120,7 +128,7 @@ export default function PushNotification({
 
     } catch (error) {
       console.error('Error enabling safety alerts:', error);
-      alert(t.connectionError + '\n\n' + t.serverCheck + '\n\n' + error.message);
+      alert('Network Error' + '\n\n' + 'Failed to complete analysis request.' + '\n\n' + error.message);
     } finally {
       setIsProcessing(false);
     }
