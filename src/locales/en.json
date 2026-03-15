@@ -54,5 +54,9 @@
     "95": "Thunderstorm",
     "96": "Thunderstorm + Hail",
     "99": "Severe Thunderstorm"
-  }
+  },
+  "timelineTitle": "12-Hour Forecast Clock",
+  "safe": "Safe",
+  "caution": "Caution",
+  "danger": "Danger"
 }

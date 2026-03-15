@@ -39,13 +39,7 @@ export default function Home() {
   const [realRadarImage, setRealRadarImage] = useState(null);
   const [weatherData, setWeatherData] = useState(null);
   const [isSpeaking, setIsSpeaking] = useState(false);
-  const utteranceRef = useRef(null);
-
-  // Map our language codes to BCP-47 speech synthesis locales
-  const speechLocaleMap = {
-    en: 'en-IN', hi: 'hi-IN', ta: 'ta-IN', te: 'te-IN',
-    bn: 'bn-IN', mr: 'mr-IN', kn: 'kn-IN', gu: 'gu-IN', ml: 'ml-IN'
-  };
+  const audioRef = useRef(null);
 
   const t = locales[language] || en;
 
@@ -84,68 +78,62 @@ export default function Home() {
     ? realBedrockAnalysis.mitigation_alert 
     : t.fallbackAlert;
 
-  // Voice alert handler using Web Speech API
+  // Reliable Universal TTS via our Next.js Edge Proxy
   const handlePlayVoiceAlert = () => {
-    if (!('speechSynthesis' in window)) {
-      alert('Your browser does not support text-to-speech.');
-      return;
-    }
-
-    // If already speaking, stop
+    // If already playing, stop
     if (isSpeaking) {
-      window.speechSynthesis.cancel();
+      if (audioRef.current) {
+        audioRef.current.pause();
+        audioRef.current.currentTime = 0;
+      }
+      if ('speechSynthesis' in window) {
+        window.speechSynthesis.cancel();
+      }
       setIsSpeaking(false);
       return;
     }
 
-    const utterance = new SpeechSynthesisUtterance(warningText);
-    const targetLang = speechLocaleMap[language] || 'en-IN';
-    const langCode = targetLang.split('-')[0]; // e.g., 'hi' from 'hi-IN'
-    
-    utterance.lang = targetLang;
-    utterance.rate = 0.9;
-    utterance.pitch = 1.0;
+    setIsSpeaking(true);
 
-    // Advanced Voice Selection Logic
-    const voices = window.speechSynthesis.getVoices();
-    
-    if (voices.length > 0) {
-      // 1. Try to find a premium/Google voice for the specific language (these handle Indic scripts best)
-      let bestVoice = voices.find(v => v.lang.startsWith(langCode) && v.name.includes('Google'));
+    try {
+      // 1. Primary Strategy: Next.js API Proxy to bypass mobile CORS and User-Agent blocks
+      const textToPlay = encodeURIComponent(warningText.replace(/—/g, '-')); // Sanitize em-dash for safety
+      const url = `/api/tts?text=${textToPlay}&lang=${language}`;
       
-      // 2. Fallback to any voice matching the language code
-      if (!bestVoice) {
-        bestVoice = voices.find(v => v.lang.startsWith(langCode));
-      }
-
-      // If no appropriate native voice is found, warn the user
-      if (!bestVoice && langCode !== 'en') {
-        const langName = languageNames[language] || targetLang;
-        const msg = `Native ${langName} TTS voice not installed on this device. The reading may sound incorrect or skip words.`;
-        console.warn(msg);
-        alert(msg);
-      }
+      const audio = audioRef.current;
+      if (!audio) throw new Error('Audio element not mounted');
       
-      // 3. Last resort fallback (English)
-      // This fallback is explicitly maintained for environments lacking Indic language packs.
-      if (!bestVoice) {
-         bestVoice = voices.find(v => v.lang === 'en-IN');
+      audio.src = url;
+      audio.load();
+      
+      audio.onended = () => setIsSpeaking(false);
+      
+      audio.onerror = () => {
+        console.warn("Backend audio proxy failed. Retrying with basic browser TTS fallback...");
+        // 2. Secondary Strategy: Fallback to underlying browser Web Speech API
+        if ('speechSynthesis' in window) {
+          const utterance = new SpeechSynthesisUtterance(warningText);
+          utterance.lang = language === 'en' ? 'en-US' : `${language}-IN`;
+          utterance.onend = () => setIsSpeaking(false);
+          utterance.onerror = () => setIsSpeaking(false);
+          window.speechSynthesis.speak(utterance);
+        } else {
+          setIsSpeaking(false);
+        }
+      };
+      
+      const playPromise = audio.play();
+      if (playPromise !== undefined) {
+        playPromise.catch(err => {
+          console.warn("Audio auto-play prevented:", err);
+          audio.onerror(); // trigger the Web Speech API fallback
+        });
       }
 
-      if (bestVoice) {
-        utterance.voice = bestVoice;
-      }
-    }
-
-    utterance.onstart = () => setIsSpeaking(true);
-    utterance.onend = () => setIsSpeaking(false);
-    utterance.onerror = (e) => {
-      console.error('Speech synthesis error:', e);
+    } catch (e) {
+      console.error(e);
       setIsSpeaking(false);
-    };
-
-    utteranceRef.current = utterance;
-    window.speechSynthesis.speak(utterance);
+    }
   };
 
   // Pre-load voices on component mount to prevent empty getVoices() on first click
@@ -180,9 +168,15 @@ export default function Home() {
     setRealBedrockAnalysis(null);
     setRealRadarImage(null);
     setWeatherData(null);
-    // Stop TTS if speaking
+    
     if (isSpeaking) {
-      window.speechSynthesis.cancel();
+      if (audioRef.current) {
+        audioRef.current.pause();
+        audioRef.current.currentTime = 0;
+      }
+      if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+        window.speechSynthesis.cancel();
+      }
       setIsSpeaking(false);
     }
   };
@@ -413,6 +407,24 @@ export default function Home() {
           />
         </div>
       </div>
+
+      <audio ref={audioRef} className="hidden" playsInline />
+
+      <footer className="mt-12 text-center text-xs text-gray-400 font-mono tracking-wide">
+        <p>Built with ❤️ by</p>
+        <p className="mt-1 text-gray-500 font-bold uppercase">Atharv Rawat • Sanidhya Bhatia • Deepesh Wadhwani</p>
+        <a 
+          href="https://github.com/atharvesting/canopy" 
+          target="_blank" 
+          rel="noopener noreferrer"
+          className="inline-flex items-center space-x-1 mt-3 hover:text-gray-900 transition-colors"
+        >
+          <svg className="h-4 w-4" fill="currentColor" viewBox="0 0 24 24">
+            <path fillRule="evenodd" d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.531 1.032 1.531 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z" clipRule="evenodd" />
+          </svg>
+          <span>View Source</span>
+        </a>
+      </footer>
     </main>
   );
 }
