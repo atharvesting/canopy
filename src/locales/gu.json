@@ -32,6 +32,11 @@
   "serverCheck": "શું તમે ખાતરી છો કે local_server.py પોર્ટ 8000 પર ચાલુ છે?",
   "languageLabel": "ભાષા",
   "fallbackAlert": "લાઇવ હવામાન ડેટા પ્રાપ્ત. AI મૂલ્યાંકન અસ્થાયી રૂપે ઑફલાઇન છે. કૃપા કરી તમારી ઇન્વેન્ટરી માટે સ્થિતિ જાતે મૉનિટર કરો.",
+  "advisoryLabel": "સલાહ",
+  "analysisSourceLabel": "વિશ્લેષણ સ્રોત",
+  "sourceAwsBedrock": "AWS Bedrock",
+  "sourceFallback": "ફોલબેક નિયમ એન્જિન",
+  "sourceUnknown": "અજાણ્યું",
   "fallbackAdvisory": "સલાહ: ફોલબેક લોજિક ઉપયોગમાં લેવામાં આવ્યું છે. ઊંચા પ્રભાવવાળા વ્યવસાયિક નિર્ણયો લેતા પહેલા ગંભીર હવામાન માહિતી વિશ્વસનીય બાહ્ય સ્ત્રોતો (IMD/સ્થાનિક એલર્ટ્સ) સાથે જરૂર ચકાસો.",
   "stopAlert": "રોકો",
   "weatherLabels": {

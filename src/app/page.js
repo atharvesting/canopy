@@ -80,6 +80,15 @@ export default function Home() {
   const warningText = realBedrockAnalysis 
     ? realBedrockAnalysis.mitigation_alert 
     : t.fallbackAlert;
+  const advisoryText = t.fallbackAdvisory || 'Advisory: Fallback logic was used. Cross-check severe weather with external trusted sources (IMD/local alerts) before making high-impact business decisions.';
+
+  const getLocalizedSourceLabel = (sourceRaw, fallbackUsed) => {
+    if (fallbackUsed) return t.sourceFallback || 'Fallback Rules Engine';
+    if (!sourceRaw) return t.sourceUnknown || 'Unknown';
+    if (/bedrock|nova/i.test(sourceRaw)) return t.sourceAwsBedrock || 'AWS Bedrock';
+    if (/smart alerts|rule|fallback/i.test(sourceRaw)) return t.sourceFallback || 'Fallback Rules Engine';
+    return sourceRaw;
+  };
 
   // Reliable Universal TTS via our Next.js Edge Proxy
   const handlePlayVoiceAlert = () => {
@@ -99,8 +108,12 @@ export default function Home() {
     setIsSpeaking(true);
 
     try {
+      const fullTextToPlay = analysisRuntime.fallbackUsed
+        ? `${warningText} ${advisoryText}`
+        : warningText;
+
       // 1. Primary Strategy: Next.js API Proxy to bypass mobile CORS and User-Agent blocks
-      const textToPlay = encodeURIComponent(warningText.replace(/—/g, '-')); // Sanitize em-dash for safety
+      const textToPlay = encodeURIComponent(fullTextToPlay.replace(/—/g, '-')); // Sanitize em-dash for safety
       const url = `/api/tts?text=${textToPlay}&lang=${language}`;
       
       const audio = audioRef.current;
@@ -115,7 +128,7 @@ export default function Home() {
         console.warn("Backend audio proxy failed. Retrying with basic browser TTS fallback...");
         // 2. Secondary Strategy: Fallback to underlying browser Web Speech API
         if ('speechSynthesis' in window) {
-          const utterance = new SpeechSynthesisUtterance(warningText);
+          const utterance = new SpeechSynthesisUtterance(fullTextToPlay);
           utterance.lang = language === 'en' ? 'en-US' : `${language}-IN`;
           utterance.onend = () => setIsSpeaking(false);
           utterance.onerror = () => setIsSpeaking(false);
@@ -211,7 +224,7 @@ export default function Home() {
       }
       toastTimerRef.current = setTimeout(() => {
         setLiveNotification(null);
-      }, 8000);
+      }, 15000);
 
       if (document.visibilityState === 'visible') {
         speakIncomingNotification(payload.body || '', payload.language || language);
@@ -444,18 +457,12 @@ export default function Home() {
                 </div>
               )}
               <div className="bg-gray-50 border border-gray-200 p-4 rounded-sm">
-                {analysisRuntime.source && (
-                  <div className={`mb-4 rounded-sm border px-3 py-2 ${analysisRuntime.fallbackUsed ? 'border-amber-300 bg-amber-50' : 'border-emerald-300 bg-emerald-50'}`}>
-                    <p className="text-[11px] font-bold uppercase tracking-wider text-gray-900">Analysis Source</p>
-                    <p className="mt-1 text-xs font-mono text-gray-800">{analysisRuntime.source}</p>
-                    <p className={`mt-2 text-[11px] font-mono uppercase tracking-wide ${analysisRuntime.fallbackUsed ? 'text-amber-800' : 'text-emerald-800'}`}>
-                      {analysisRuntime.fallbackUsed ? 'Fallback mode active' : 'Primary backend active'}
+                {analysisRuntime.fallbackUsed && (
+                  <div className="mb-4 rounded-sm border border-amber-300 bg-amber-50 px-3 py-2">
+                    <p className="text-[11px] font-bold uppercase tracking-wider text-amber-900">{t.advisoryLabel || 'Advisory'}</p>
+                    <p className="mt-2 text-xs leading-relaxed text-amber-900">
+                      {advisoryText}
                     </p>
-                    {analysisRuntime.fallbackUsed && (
-                      <p className="mt-2 text-xs leading-relaxed text-amber-900">
-                        {t.fallbackAdvisory || 'Advisory: Fallback logic was used. Cross-check severe weather with external trusted sources (IMD/local alerts) before making high-impact business decisions.'}
-                      </p>
-                    )}
                   </div>
                 )}
 
@@ -529,6 +536,13 @@ export default function Home() {
               </button>
             </div>
           </div>
+        </div>
+      )}
+
+      {analysisRuntime.source && (
+        <div className="mt-4 text-center text-sm text-gray-700">
+          <span className="font-semibold">{t.analysisSourceLabel || 'Analysis Source'}:</span>{' '}
+          <span className="font-medium">{getLocalizedSourceLabel(analysisRuntime.source, analysisRuntime.fallbackUsed)}</span>
         </div>
       )}
 

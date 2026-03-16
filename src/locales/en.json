@@ -32,6 +32,11 @@
   "serverCheck": "Are you sure local_server.py is running on port 8000?",
   "languageLabel": "Language",
   "fallbackAlert": "Live weather data received. AI assessment is temporarily offline. Please monitor conditions manually for your inventory.",
+  "advisoryLabel": "Advisory",
+  "analysisSourceLabel": "Analysis Source",
+  "sourceAwsBedrock": "AWS Bedrock",
+  "sourceFallback": "Fallback Rules Engine",
+  "sourceUnknown": "Unknown",
   "fallbackAdvisory": "Advisory: Fallback logic was used. Cross-check severe weather with external trusted sources (IMD/local alerts) before making high-impact business decisions.",
   "stopAlert": "Stop",
   "weatherLabels": {

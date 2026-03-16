@@ -76,6 +76,7 @@ export default function PushNotification({
   t
 }) {
   const [isProcessing, setIsProcessing] = useState(false);
+  const pushTriggerDelayMs = Number(process.env.NEXT_PUBLIC_PUSH_TRIGGER_DELAY_MS || 3000);
 
   const keyFingerprint = (key) => {
     if (!key || key.length < 12) return 'missing';
@@ -287,8 +288,20 @@ export default function PushNotification({
         });
       }
       
-      // FIRE PUSH NOTIFICATION IMMEDIAITELY UPON ASSESSMENT SUCCESS
+      // Populate Dashboard UI state
+      if (apiResult.assessment && !apiResult.assessment.error) {
+        setRealBedrockAnalysis(apiResult.assessment);
+      }
+      if (apiResult.weather_data) {
+        setWeatherData(apiResult.weather_data);
+      }
+      
+      // Navigate to Active Dashboard sequence
+      setIsActive(true);
+
+      // Trigger push shortly after user enters the assessment screen.
       if (pushSubscription && apiResult.assessment && apiResult.assessment.mitigation_alert) {
+          await new Promise((resolve) => setTimeout(resolve, pushTriggerDelayMs));
           console.log("Triggering Push API...");
           try {
               const pushData = await triggerPushNotification({
@@ -323,17 +336,6 @@ export default function PushNotification({
               }
           }
       }
-      
-      // Populate Dashboard UI state
-      if (apiResult.assessment && !apiResult.assessment.error) {
-        setRealBedrockAnalysis(apiResult.assessment);
-      }
-      if (apiResult.weather_data) {
-        setWeatherData(apiResult.weather_data);
-      }
-      
-      // Navigate to Active Dashboard sequence
-      setIsActive(true);
 
     } catch (error) {
       console.error('Error enabling safety alerts:', error);
