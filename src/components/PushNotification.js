@@ -18,6 +18,16 @@ const urlBase64ToUint8Array = (base64String) => {
   return outputArray;
 };
 
+const toBase64Url = (buffer) => {
+  if (!buffer) return null;
+  const bytes = new Uint8Array(buffer);
+  let binary = '';
+  for (let i = 0; i < bytes.byteLength; i++) {
+    binary += String.fromCharCode(bytes[i]);
+  }
+  return window.btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+};
+
 export default function PushNotification({ 
   inventoryType, 
   setLocationStatus, 
@@ -32,6 +42,19 @@ export default function PushNotification({
 }) {
   const [isProcessing, setIsProcessing] = useState(false);
 
+  const keyFingerprint = (key) => {
+    if (!key || key.length < 12) return 'missing';
+    return `${key.slice(0, 6)}...${key.slice(-6)}`;
+  };
+
+  const parseJsonSafely = async (resp) => {
+    try {
+      return await resp.json();
+    } catch {
+      return null;
+    }
+  };
+
   const readResponseError = async (resp) => {
     let details = '';
     try {
@@ -41,6 +64,79 @@ export default function PushNotification({
       details = await resp.text();
     }
     return `${resp.status} ${resp.statusText}${details ? ` - ${details}` : ''}`;
+  };
+
+  const shouldRotateSubscription = (errorText = '') => {
+    const msg = errorText.toLowerCase();
+    return (
+      msg.includes('vapid public key mismatch') ||
+      msg.includes('unauthenticated') ||
+      msg.includes('authorization header must be specified')
+    );
+  };
+
+  const subscribeWithCurrentKey = async (registration, publicVapidKey, { forceRotate = false } = {}) => {
+    const existingSub = await registration.pushManager.getSubscription();
+    if (existingSub) {
+      const existingServerKey = toBase64Url(existingSub.options?.applicationServerKey);
+      const expectedServerKey = publicVapidKey.replace(/=+$/, '');
+      const mismatchedKey = existingServerKey && existingServerKey !== expectedServerKey;
+
+      if (forceRotate || mismatchedKey) {
+        console.log('Rotating stale push subscription...');
+        await existingSub.unsubscribe();
+      } else {
+        return existingSub;
+      }
+    }
+
+    console.log('Subscribing to PushManager...');
+    const createdSub = await registration.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey: urlBase64ToUint8Array(publicVapidKey)
+    });
+    console.log('Successfully registered new push subscription!');
+    return createdSub;
+  };
+
+  const registerSubscriptionOnServer = async (subscription) => {
+    const subResp = await fetch('/api/push', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action: 'subscribe',
+        subscription
+      })
+    });
+
+    if (!subResp.ok) {
+      throw new Error(`Subscription registration failed: ${await readResponseError(subResp)}`);
+    }
+  };
+
+  const triggerPushNotification = async ({ subscription, title, body, language }) => {
+    const pushResp = await fetch('/api/push', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action: 'trigger',
+        title,
+        body,
+        language,
+        subscription
+      })
+    });
+
+    if (!pushResp.ok) {
+      const clone = pushResp.clone();
+      const errText = await readResponseError(pushResp);
+      const payload = await parseJsonSafely(clone);
+      const providerError = payload?.providerError || '';
+      const hint = payload?.hint || '';
+      throw new Error(`Push trigger failed: ${errText}${providerError ? ` | provider: ${providerError}` : ''}${hint ? ` | hint: ${hint}` : ''}`);
+    }
+
+    return pushResp.json();
   };
 
   const handleEnableAlerts = async () => {
@@ -62,6 +158,8 @@ export default function PushNotification({
 
       // 2. Request Notification Permissions
       let pushSubscription = null;
+      let swRegistration = null;
+      const publicVapidKey = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY;
       if ('Notification' in window && 'serviceWorker' in navigator && 'PushManager' in window) {
         try {
           const perm = await Notification.requestPermission();
@@ -69,41 +167,34 @@ export default function PushNotification({
 
           if (perm === 'granted') {
             // 3. Subscribe to Push Manager
-            const registration = await navigator.serviceWorker.ready;
-            if (registration) {
-              const publicVapidKey = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY;
+            swRegistration = await navigator.serviceWorker.ready;
+            if (swRegistration) {
 
               if (!publicVapidKey) {
                 throw new Error('NEXT_PUBLIC_VAPID_PUBLIC_KEY is missing in deployed environment.');
               }
+
+              const diagResp = await fetch('/api/push', { method: 'GET', cache: 'no-store' });
+              if (!diagResp.ok) {
+                throw new Error(`Push diagnostics check failed: ${await readResponseError(diagResp)}`);
+              }
+
+              const diagData = await diagResp.json();
+              const diagnostics = diagData?.diagnostics || {};
+              if (!diagnostics.vapidConfigured) {
+                throw new Error(`Server push is not configured: ${diagnostics.vapidConfigError || 'Unknown VAPID error'}`);
+              }
+
+              const clientFingerprint = keyFingerprint(publicVapidKey);
+              if (diagnostics.publicKeyFingerprint && diagnostics.publicKeyFingerprint !== clientFingerprint) {
+                throw new Error(
+                  `Client/server VAPID public key mismatch. Client ${clientFingerprint}, Server ${diagnostics.publicKeyFingerprint}.`
+                );
+              }
               
               try {
-                const existingSub = await registration.pushManager.getSubscription();
-                if (existingSub) {
-                  // Reuse existing subscription when available to avoid unnecessary churn/races.
-                  pushSubscription = existingSub;
-                } else {
-                  console.log("Subscribing to PushManager...");
-                  pushSubscription = await registration.pushManager.subscribe({
-                    userVisibleOnly: true,
-                    applicationServerKey: urlBase64ToUint8Array(publicVapidKey)
-                  });
-                  console.log("Successfully registered new push subscription!");
-                }
-
-                // POST subscription to our mock Push Route
-                const subResp = await fetch('/api/push', {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({
-                    action: 'subscribe',
-                    subscription: pushSubscription
-                  })
-                });
-
-                if (!subResp.ok) {
-                  throw new Error(`Subscription registration failed: ${await readResponseError(subResp)}`);
-                }
+                pushSubscription = await subscribeWithCurrentKey(swRegistration, publicVapidKey);
+                await registerSubscriptionOnServer(pushSubscription);
                 
               } catch (pushErr) {
                 setNotificationStatus('Error');
@@ -158,27 +249,36 @@ export default function PushNotification({
       if (pushSubscription && apiResult.assessment && apiResult.assessment.mitigation_alert) {
           console.log("Triggering Push API...");
           try {
-              const pushResp = await fetch('/api/push', {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({
-                      action: 'trigger',
-                      title: `Canopy Warning: ${apiResult.assessment.urgency_level}`,
-                      body: apiResult.assessment.mitigation_alert,
-                      language: language,
-                      subscription: pushSubscription
-                  })
+              const pushData = await triggerPushNotification({
+                subscription: pushSubscription,
+                title: `Canopy Warning: ${apiResult.assessment.urgency_level}`,
+                body: apiResult.assessment.mitigation_alert,
+                language
               });
-
-                    if (!pushResp.ok) {
-                    throw new Error(`Push trigger failed: ${await readResponseError(pushResp)}`);
-                    }
-
-              const pushData = await pushResp.json();
               console.log("Push API Trigger Response:", pushData);
           } catch(err) {
+              const message = err?.message || String(err);
               console.error("Delayed test push failed", err);
-                    alert('Push send failed.\n\n' + (err?.message || String(err)));
+
+              // Last-resort self-heal: if provider reports auth/key mismatch, rotate sub then retry once.
+              if (swRegistration && publicVapidKey && shouldRotateSubscription(message)) {
+                try {
+                  pushSubscription = await subscribeWithCurrentKey(swRegistration, publicVapidKey, { forceRotate: true });
+                  await registerSubscriptionOnServer(pushSubscription);
+                  const retryPushData = await triggerPushNotification({
+                    subscription: pushSubscription,
+                    title: `Canopy Warning: ${apiResult.assessment.urgency_level}`,
+                    body: apiResult.assessment.mitigation_alert,
+                    language
+                  });
+                  console.log('Push retry succeeded after subscription rotation:', retryPushData);
+                } catch (retryErr) {
+                  console.error('Push retry failed after rotation', retryErr);
+                  alert('Push send failed after automatic retry.\n\n' + (retryErr?.message || String(retryErr)));
+                }
+              } else {
+                alert('Push send failed.\n\n' + message);
+              }
           }
       }
       

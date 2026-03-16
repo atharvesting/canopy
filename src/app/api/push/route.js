@@ -3,14 +3,24 @@ import webpush from 'web-push';
 
 export const dynamic = 'force-dynamic';
 
-const vapidPublicKey = process.env.VAPID_PUBLIC_KEY || process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY;
+const explicitServerPublicKey = process.env.VAPID_PUBLIC_KEY;
+const clientExposedPublicKey = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY;
+const publicKeysMatch =
+    !explicitServerPublicKey ||
+    !clientExposedPublicKey ||
+    explicitServerPublicKey === clientExposedPublicKey;
+
+const vapidPublicKey = explicitServerPublicKey || clientExposedPublicKey;
 const vapidPrivateKey = process.env.VAPID_PRIVATE_KEY;
 const vapidSubject = process.env.VAPID_SUBJECT || 'mailto:test@example.com';
 
 let vapidConfigured = false;
 let vapidConfigError = null;
 
-if (vapidPublicKey && vapidPrivateKey) {
+if (!publicKeysMatch) {
+    vapidConfigError = 'VAPID public key mismatch between VAPID_PUBLIC_KEY and NEXT_PUBLIC_VAPID_PUBLIC_KEY';
+    console.warn('VAPID public key mismatch between server and client env vars. Push notifications are disabled until keys match.');
+} else if (vapidPublicKey && vapidPrivateKey) {
     try {
         webpush.setVapidDetails(vapidSubject, vapidPublicKey, vapidPrivateKey);
         vapidConfigured = true;
@@ -31,7 +41,10 @@ const keyFingerprint = (key) => {
 const pushDiagnostics = () => ({
     vapidConfigured,
     vapidConfigError,
+    publicKeysMatch,
     hasPublicKey: Boolean(vapidPublicKey),
+    hasVapidPublicKeyEnv: Boolean(explicitServerPublicKey),
+    hasNextPublicVapidEnv: Boolean(clientExposedPublicKey),
     hasPrivateKey: Boolean(vapidPrivateKey),
     publicKeyFingerprint: keyFingerprint(vapidPublicKey),
     privateKeyFingerprint: keyFingerprint(vapidPrivateKey),
@@ -106,15 +119,19 @@ export async function POST(request) {
                     });
                 } catch (err) {
                     console.error('Failed to send to direct sub', err.statusCode, err.body, err);
+                    const providerBody = err.body || '';
+                    const vapidMismatch = typeof providerBody === 'string' && providerBody.toLowerCase().includes('vapid public key mismatch');
                     return NextResponse.json(
                         {
                             success: false,
                             error: err.message,
                             statusCode: err.statusCode || 500,
-                            providerError: err.body || null,
+                            providerError: providerBody || null,
                             endpoint: err.endpoint || null,
                             diagnostics: pushDiagnostics(),
-                            hint: '401 unauthenticated from FCM usually means missing or invalid VAPID Authorization header.'
+                            hint: vapidMismatch
+                                ? 'Subscription was created with a different VAPID public key. Re-subscribe this device using current key and retry.'
+                                : '401 unauthenticated from push provider usually means missing or invalid VAPID Authorization header.'
                         },
                         { status: err.statusCode || 500 }
                     );
