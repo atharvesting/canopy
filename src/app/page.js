@@ -40,6 +40,7 @@ export default function Home() {
   const [weatherData, setWeatherData] = useState(null);
   const [analysisRuntime, setAnalysisRuntime] = useState({ source: null, fallbackUsed: null });
   const [isSpeaking, setIsSpeaking] = useState(false);
+  const [isAdvisorySpeaking, setIsAdvisorySpeaking] = useState(false);
   const [liveNotification, setLiveNotification] = useState(null);
   const audioRef = useRef(null);
   const toastTimerRef = useRef(null);
@@ -80,7 +81,16 @@ export default function Home() {
   const warningText = realBedrockAnalysis 
     ? realBedrockAnalysis.mitigation_alert 
     : t.fallbackAlert;
-  const advisoryText = t.fallbackAdvisory || 'Advisory: Fallback logic was used. Cross-check severe weather with external trusted sources (IMD/local alerts) before making high-impact business decisions.';
+  const advisoryTextRaw = t.fallbackAdvisory || 'Advisory: Fallback logic was used. Cross-check severe weather with external trusted sources (IMD/local alerts) before making high-impact business decisions.';
+
+  const stripLeadingAdvisoryLabel = (text, label) => {
+    if (!text) return text;
+    const escapedLabel = String(label || 'Advisory').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const prefixedLabelRegex = new RegExp(`^\\s*${escapedLabel}\\s*[:：-]\\s*`, 'i');
+    return text.replace(prefixedLabelRegex, '').trim();
+  };
+
+  const advisoryText = stripLeadingAdvisoryLabel(advisoryTextRaw, t.advisoryLabel || 'Advisory');
 
   const getLocalizedSourceLabel = (sourceRaw, fallbackUsed) => {
     if (fallbackUsed) return t.sourceFallback || 'Fallback Rules Engine';
@@ -90,72 +100,92 @@ export default function Home() {
     return sourceRaw;
   };
 
+  const stopSpeechPlayback = () => {
+    if (audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current.currentTime = 0;
+    }
+    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+      window.speechSynthesis.cancel();
+    }
+    setIsSpeaking(false);
+    setIsAdvisorySpeaking(false);
+  };
+
+  const playTtsText = (textToSpeak, setActiveState) => {
+    setIsSpeaking(false);
+    setIsAdvisorySpeaking(false);
+    setActiveState(true);
+
+    const finalize = () => setActiveState(false);
+
+    const fallbackToSpeechSynthesis = () => {
+      if ('speechSynthesis' in window) {
+        const utterance = new SpeechSynthesisUtterance(textToSpeak);
+        utterance.lang = language === 'en' ? 'en-US' : `${language}-IN`;
+        utterance.onend = finalize;
+        utterance.onerror = finalize;
+        window.speechSynthesis.speak(utterance);
+      } else {
+        finalize();
+      }
+    };
+
+    try {
+      const safeText = encodeURIComponent(String(textToSpeak).replace(/—/g, '-'));
+      const audio = audioRef.current;
+      if (!audio) throw new Error('Audio element not mounted');
+
+      audio.src = `/api/tts?text=${safeText}&lang=${language}`;
+      audio.load();
+
+      audio.onended = finalize;
+      audio.onerror = () => {
+        console.warn("Backend audio proxy failed. Retrying with basic browser TTS fallback...");
+        fallbackToSpeechSynthesis();
+      };
+
+      const playPromise = audio.play();
+      if (playPromise !== undefined) {
+        playPromise.catch((err) => {
+          console.warn("Audio auto-play prevented:", err);
+          fallbackToSpeechSynthesis();
+        });
+      }
+    } catch (e) {
+      console.error(e);
+      fallbackToSpeechSynthesis();
+    }
+  };
+
   // Reliable Universal TTS via our Next.js Edge Proxy
   const handlePlayVoiceAlert = () => {
     // If already playing, stop
     if (isSpeaking) {
-      if (audioRef.current) {
-        audioRef.current.pause();
-        audioRef.current.currentTime = 0;
-      }
-      if ('speechSynthesis' in window) {
-        window.speechSynthesis.cancel();
-      }
-      setIsSpeaking(false);
+      stopSpeechPlayback();
       return;
     }
 
-    setIsSpeaking(true);
+    const fullTextToPlay = analysisRuntime.fallbackUsed
+      ? `${warningText} ${advisoryText}`
+      : warningText;
+    playTtsText(fullTextToPlay, setIsSpeaking);
+  };
 
-    try {
-      const fullTextToPlay = analysisRuntime.fallbackUsed
-        ? `${warningText} ${advisoryText}`
-        : warningText;
-
-      // 1. Primary Strategy: Next.js API Proxy to bypass mobile CORS and User-Agent blocks
-      const textToPlay = encodeURIComponent(fullTextToPlay.replace(/—/g, '-')); // Sanitize em-dash for safety
-      const url = `/api/tts?text=${textToPlay}&lang=${language}`;
-      
-      const audio = audioRef.current;
-      if (!audio) throw new Error('Audio element not mounted');
-      
-      audio.src = url;
-      audio.load();
-      
-      audio.onended = () => setIsSpeaking(false);
-      
-      audio.onerror = () => {
-        console.warn("Backend audio proxy failed. Retrying with basic browser TTS fallback...");
-        // 2. Secondary Strategy: Fallback to underlying browser Web Speech API
-        if ('speechSynthesis' in window) {
-          const utterance = new SpeechSynthesisUtterance(fullTextToPlay);
-          utterance.lang = language === 'en' ? 'en-US' : `${language}-IN`;
-          utterance.onend = () => setIsSpeaking(false);
-          utterance.onerror = () => setIsSpeaking(false);
-          window.speechSynthesis.speak(utterance);
-        } else {
-          setIsSpeaking(false);
-        }
-      };
-      
-      const playPromise = audio.play();
-      if (playPromise !== undefined) {
-        playPromise.catch(err => {
-          console.warn("Audio auto-play prevented:", err);
-          audio.onerror(); // trigger the Web Speech API fallback
-        });
-      }
-
-    } catch (e) {
-      console.error(e);
-      setIsSpeaking(false);
+  const handlePlayAdvisoryVoiceAlert = () => {
+    if (isAdvisorySpeaking) {
+      stopSpeechPlayback();
+      return;
     }
+
+    playTtsText(advisoryText, setIsAdvisorySpeaking);
   };
 
   const speakIncomingNotification = useCallback((messageText, langCode) => {
     if (!messageText) return;
 
     setIsSpeaking(true);
+    setIsAdvisorySpeaking(false);
 
     const finalize = () => setIsSpeaking(false);
     const fallbackToSpeechSynthesis = () => {
@@ -265,15 +295,8 @@ export default function Home() {
     setWeatherData(null);
     setAnalysisRuntime({ source: null, fallbackUsed: null });
     
-    if (isSpeaking) {
-      if (audioRef.current) {
-        audioRef.current.pause();
-        audioRef.current.currentTime = 0;
-      }
-      if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
-        window.speechSynthesis.cancel();
-      }
-      setIsSpeaking(false);
+    if (isSpeaking || isAdvisorySpeaking) {
+      stopSpeechPlayback();
     }
   };
 
@@ -459,7 +482,30 @@ export default function Home() {
               <div className="bg-gray-50 border border-gray-200 p-4 rounded-sm">
                 {analysisRuntime.fallbackUsed && (
                   <div className="mb-4 rounded-sm border border-amber-300 bg-amber-50 px-3 py-2">
-                    <p className="text-[11px] font-bold uppercase tracking-wider text-amber-900">{t.advisoryLabel || 'Advisory'}</p>
+                    <div className="flex items-start justify-between gap-3">
+                      <p className="text-[11px] font-bold uppercase tracking-wider text-amber-900">{t.advisoryLabel || 'Advisory'}</p>
+                      <button
+                        onClick={handlePlayAdvisoryVoiceAlert}
+                        className={`p-1.5 rounded-full transition-colors shrink-0 ${
+                          isAdvisorySpeaking
+                            ? 'bg-amber-900 text-amber-50'
+                            : 'bg-amber-100 border border-amber-300 text-amber-900 hover:bg-amber-200'
+                        }`}
+                        title={isAdvisorySpeaking ? (t.stopAlert || 'Stop') : t.playVoiceAlert}
+                        aria-label={isAdvisorySpeaking ? (t.stopAlert || 'Stop') : t.playVoiceAlert}
+                      >
+                        {isAdvisorySpeaking ? (
+                          <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5 animate-pulse" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 10a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1v-4z" />
+                          </svg>
+                        ) : (
+                          <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="square" strokeLinejoin="miter" strokeWidth={2} d="M15.536 8.464a5 5 0 010 7.072m2.828-9.9a9 9 0 010 12.728M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" />
+                          </svg>
+                        )}
+                      </button>
+                    </div>
                     <p className="mt-2 text-xs leading-relaxed text-amber-900">
                       {advisoryText}
                     </p>
