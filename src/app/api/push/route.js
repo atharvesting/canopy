@@ -43,19 +43,27 @@ export async function POST(request) {
         
         // Trigger a test alert to all subscribed devices
         if (payload.action === 'trigger') {
-            const { title, body } = payload;
-            
+            const { title, body, subscription } = payload;
+
             const notificationPayload = JSON.stringify({
                 title: title || 'Project Canopy Alert',
                 body: body || 'Extreme Heat Detected: Move all produce to shade immediately.',
                 icon: '/icon-192x192.png',
-                data: {
-                    url: '/'
-                }
+                data: { url: '/' }
             });
 
-            console.log(`Sending push to ${subscriptions.size} subscribers...`);
-            
+            // If the client provided their subscription directly in the trigger request,
+            // we send to it immediately (bypassing the need for in-memory persistence on serverless)
+            if (subscription) {
+                console.log("Sending push directly to provided subscription in trigger payload!");
+                await webpush.sendNotification(subscription, notificationPayload).catch(err => {
+                    console.error('Failed to send to direct sub', err);
+                });
+                return NextResponse.json({ success: true, message: `Sent notification right back to client device` });
+            }
+
+            // Fallback: sweep any existing in-memory subscriptions
+            console.log(`Sending push to ${subscriptions.size} in-memory subscribers...`);
             const promises = [];
             for (const stringifiedSub of subscriptions) {
                 const sub = JSON.parse(stringifiedSub);

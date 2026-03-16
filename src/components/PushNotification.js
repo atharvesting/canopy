@@ -132,7 +132,8 @@ export default function PushNotification({
                   action: 'trigger',
                   title: `Canopy Warning: ${apiResult.assessment.urgency_level}`,
                   body: apiResult.assessment.mitigation_alert,
-                  language: language
+                  language: language,
+                  subscription: pushSubscription
               })
           }).catch(err => console.error("Delayed test push failed", err));
       }
