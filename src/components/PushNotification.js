@@ -28,6 +28,41 @@ const toBase64Url = (buffer) => {
   return window.btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 };
 
+const URGENCY_LABELS = {
+  en: { LOW: 'Low', MEDIUM: 'Medium', HIGH: 'High' },
+  hi: { LOW: 'कम', MEDIUM: 'मध्यम', HIGH: 'उच्च' },
+  ta: { LOW: 'குறைவு', MEDIUM: 'மிதமான', HIGH: 'உயர்' },
+  te: { LOW: 'తక్కువ', MEDIUM: 'మధ్యస్థ', HIGH: 'అధిక' },
+  bn: { LOW: 'কম', MEDIUM: 'মাঝারি', HIGH: 'উচ্চ' },
+  mr: { LOW: 'कमी', MEDIUM: 'मध्यम', HIGH: 'उच्च' },
+  kn: { LOW: 'ಕಡಿಮೆ', MEDIUM: 'ಮಧ್ಯಮ', HIGH: 'ಹೆಚ್ಚು' },
+  gu: { LOW: 'ઓછું', MEDIUM: 'મધ્યમ', HIGH: 'ઉચ્ચ' },
+  ml: { LOW: 'കുറവ്', MEDIUM: 'ഇടത്തരം', HIGH: 'ഉയർന്ന' }
+};
+
+const WARNING_PREFIX = {
+  en: 'Canopy Warning',
+  hi: 'कैनपी चेतावनी',
+  ta: 'கேனபி எச்சரிக்கை',
+  te: 'కెనోపీ హెచ్చరిక',
+  bn: 'ক্যানোপি সতর্কতা',
+  mr: 'कॅनोपी इशारा',
+  kn: 'ಕ್ಯಾನಪಿ ಎಚ್ಚರಿಕೆ',
+  gu: 'કેનોપી ચેતવણી',
+  ml: 'കാനോപി മുന്നറിയിപ്പ്'
+};
+
+const getLocalizedUrgency = (urgencyLevel, selectedLanguage) => {
+  const normalized = String(urgencyLevel || 'MEDIUM').toUpperCase();
+  const labels = URGENCY_LABELS[selectedLanguage] || URGENCY_LABELS.en;
+  return labels[normalized] || normalized;
+};
+
+const getLocalizedWarningTitle = (urgencyLevel, selectedLanguage) => {
+  const prefix = WARNING_PREFIX[selectedLanguage] || WARNING_PREFIX.en;
+  return `${prefix}: ${getLocalizedUrgency(urgencyLevel, selectedLanguage)}`;
+};
+
 export default function PushNotification({ 
   inventoryType, 
   setLocationStatus, 
@@ -35,8 +70,8 @@ export default function PushNotification({
   isActive, 
   setIsActive,
   setRealBedrockAnalysis,
-  setRealRadarImage,
   setWeatherData,
+  setAnalysisRuntime,
   language,
   t
 }) {
@@ -244,6 +279,13 @@ export default function PushNotification({
       
       const apiResult = await response.json();
       console.log('Backend pipeline returned:', apiResult);
+
+      if (setAnalysisRuntime) {
+        setAnalysisRuntime({
+          source: apiResult.source || 'Unknown source',
+          fallbackUsed: Boolean(apiResult.fallback_used)
+        });
+      }
       
       // FIRE PUSH NOTIFICATION IMMEDIAITELY UPON ASSESSMENT SUCCESS
       if (pushSubscription && apiResult.assessment && apiResult.assessment.mitigation_alert) {
@@ -251,7 +293,7 @@ export default function PushNotification({
           try {
               const pushData = await triggerPushNotification({
                 subscription: pushSubscription,
-                title: `Canopy Warning: ${apiResult.assessment.urgency_level}`,
+                title: getLocalizedWarningTitle(apiResult.assessment.urgency_level, language),
                 body: apiResult.assessment.mitigation_alert,
                 language
               });
@@ -267,7 +309,7 @@ export default function PushNotification({
                   await registerSubscriptionOnServer(pushSubscription);
                   const retryPushData = await triggerPushNotification({
                     subscription: pushSubscription,
-                    title: `Canopy Warning: ${apiResult.assessment.urgency_level}`,
+                    title: getLocalizedWarningTitle(apiResult.assessment.urgency_level, language),
                     body: apiResult.assessment.mitigation_alert,
                     language
                   });
@@ -285,9 +327,6 @@ export default function PushNotification({
       // Populate Dashboard UI state
       if (apiResult.assessment && !apiResult.assessment.error) {
         setRealBedrockAnalysis(apiResult.assessment);
-      }
-      if (apiResult.radar_base64) {
-        setRealRadarImage(apiResult.radar_base64);
       }
       if (apiResult.weather_data) {
         setWeatherData(apiResult.weather_data);

@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
+import Image from 'next/image';
 import PushNotification from '@/components/PushNotification';
 import SafeWindowClock from '@/components/SafeWindowClock';
 
@@ -36,10 +37,12 @@ export default function Home() {
   const [notificationStatus, setNotificationStatus] = useState('Disabled');
   const [isActive, setIsActive] = useState(false);
   const [realBedrockAnalysis, setRealBedrockAnalysis] = useState(null);
-  const [realRadarImage, setRealRadarImage] = useState(null);
   const [weatherData, setWeatherData] = useState(null);
+  const [analysisRuntime, setAnalysisRuntime] = useState({ source: null, fallbackUsed: null });
   const [isSpeaking, setIsSpeaking] = useState(false);
+  const [liveNotification, setLiveNotification] = useState(null);
   const audioRef = useRef(null);
+  const toastTimerRef = useRef(null);
 
   const t = locales[language] || en;
 
@@ -136,6 +139,46 @@ export default function Home() {
     }
   };
 
+  const speakIncomingNotification = useCallback((messageText, langCode) => {
+    if (!messageText) return;
+
+    setIsSpeaking(true);
+
+    const finalize = () => setIsSpeaking(false);
+    const fallbackToSpeechSynthesis = () => {
+      if ('speechSynthesis' in window) {
+        const utterance = new SpeechSynthesisUtterance(messageText);
+        utterance.lang = langCode === 'en' ? 'en-US' : `${langCode}-IN`;
+        utterance.onend = finalize;
+        utterance.onerror = finalize;
+        window.speechSynthesis.speak(utterance);
+      } else {
+        finalize();
+      }
+    };
+
+    try {
+      const audio = audioRef.current;
+      if (!audio) {
+        fallbackToSpeechSynthesis();
+        return;
+      }
+
+      const safeText = encodeURIComponent(String(messageText).replace(/—/g, '-'));
+      audio.src = `/api/tts?text=${safeText}&lang=${langCode || language}`;
+      audio.load();
+      audio.onended = finalize;
+      audio.onerror = fallbackToSpeechSynthesis;
+
+      const playPromise = audio.play();
+      if (playPromise !== undefined) {
+        playPromise.catch(() => fallbackToSpeechSynthesis());
+      }
+    } catch {
+      fallbackToSpeechSynthesis();
+    }
+  }, [language]);
+
   // Pre-load voices on component mount to prevent empty getVoices() on first click
   useEffect(() => {
     if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
@@ -145,6 +188,45 @@ export default function Home() {
       };
     }
   }, []);
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || !('serviceWorker' in navigator)) {
+      return;
+    }
+
+    const handleServiceWorkerMessage = (event) => {
+      const payload = event?.data?.payload;
+      if (event?.data?.type !== 'push-notification' || !payload) {
+        return;
+      }
+
+      setLiveNotification({
+        title: payload.title || 'Canopy Notification',
+        body: payload.body || '',
+        language: payload.language || language
+      });
+
+      if (toastTimerRef.current) {
+        clearTimeout(toastTimerRef.current);
+      }
+      toastTimerRef.current = setTimeout(() => {
+        setLiveNotification(null);
+      }, 8000);
+
+      if (document.visibilityState === 'visible') {
+        speakIncomingNotification(payload.body || '', payload.language || language);
+      }
+    };
+
+    navigator.serviceWorker.addEventListener('message', handleServiceWorkerMessage);
+
+    return () => {
+      navigator.serviceWorker.removeEventListener('message', handleServiceWorkerMessage);
+      if (toastTimerRef.current) {
+        clearTimeout(toastTimerRef.current);
+      }
+    };
+  }, [language, speakIncomingNotification]);
 
   // Get localized inventory label for display
   const getLocalizedInventory = (key) => {
@@ -157,6 +239,7 @@ export default function Home() {
     if (status === 'Unsupported') return t.unsupported;
     if (status === 'Granted') return t.granted;
     if (status === 'Denied') return t.denied;
+    if (status === 'Error') return t.error || 'Error';
     if (status.includes('Enabled')) return status; // Keep coords as-is
     return status;
   };
@@ -166,8 +249,8 @@ export default function Home() {
     setLocationStatus('Disabled');
     setNotificationStatus('Disabled');
     setRealBedrockAnalysis(null);
-    setRealRadarImage(null);
     setWeatherData(null);
+    setAnalysisRuntime({ source: null, fallbackUsed: null });
     
     if (isSpeaking) {
       if (audioRef.current) {
@@ -183,6 +266,9 @@ export default function Home() {
 
   return (
     <main className="min-h-screen bg-white flex flex-col items-center justify-center p-6 sm:p-12 font-sans text-gray-900">
+      <div className="w-full max-w-md mb-4 border border-amber-300 bg-amber-50 text-amber-900 rounded-sm px-4 py-3 text-xs font-mono uppercase tracking-wide">
+        Please test with an Android phone for expected push notification behavior.
+      </div>
       <div className="w-full max-w-md bg-white border border-gray-200 rounded-sm">
         <div className="border-b border-gray-200 p-6 flex justify-between items-center relative">
           <div className="flex items-center">
@@ -220,8 +306,9 @@ export default function Home() {
             <>
               {/* Language Selector */}
               <div>
-                <label htmlFor="language" className="block text-xs font-bold uppercase tracking-wider text-gray-900 mb-2">
-                  {t.languageLabel}
+                <label htmlFor="language" className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-gray-900 mb-2">
+                  <Image src="/globe.svg" alt="" aria-hidden="true" width={16} height={16} className="h-4 w-4" />
+                  <span>{t.languageLabel}</span>
                 </label>
                 <div className="relative">
                   <select
@@ -357,13 +444,28 @@ export default function Home() {
                 </div>
               )}
               <div className="bg-gray-50 border border-gray-200 p-4 rounded-sm">
+                {analysisRuntime.source && (
+                  <div className={`mb-4 rounded-sm border px-3 py-2 ${analysisRuntime.fallbackUsed ? 'border-amber-300 bg-amber-50' : 'border-emerald-300 bg-emerald-50'}`}>
+                    <p className="text-[11px] font-bold uppercase tracking-wider text-gray-900">Analysis Source</p>
+                    <p className="mt-1 text-xs font-mono text-gray-800">{analysisRuntime.source}</p>
+                    <p className={`mt-2 text-[11px] font-mono uppercase tracking-wide ${analysisRuntime.fallbackUsed ? 'text-amber-800' : 'text-emerald-800'}`}>
+                      {analysisRuntime.fallbackUsed ? 'Fallback mode active' : 'Primary backend active'}
+                    </p>
+                    {analysisRuntime.fallbackUsed && (
+                      <p className="mt-2 text-xs leading-relaxed text-amber-900">
+                        {t.fallbackAdvisory || 'Advisory: Fallback logic was used. Cross-check severe weather with external trusted sources (IMD/local alerts) before making high-impact business decisions.'}
+                      </p>
+                    )}
+                  </div>
+                )}
+
                 <div className="flex justify-between items-start border-b border-gray-200 pb-2 mb-3">
                   <h3 className="text-xs font-bold uppercase tracking-wider text-gray-900 mt-1">
-                    {t.aiAssessment} // {getLocalizedInventory(inventoryType)}
+                    {t.aiAssessment} - {getLocalizedInventory(inventoryType)}
                   </h3>
                   <button 
                     onClick={handlePlayVoiceAlert}
-                    className={`ml-3 p-2 rounded-full transition-colors flex-shrink-0 ${
+                    className={`ml-3 p-2 rounded-full transition-colors shrink-0 ${
                       isSpeaking 
                         ? 'bg-black text-white shadow-sm' 
                         : 'bg-white border border-gray-200 text-gray-700 hover:text-black hover:border-gray-300 shadow-sm'
@@ -400,8 +502,8 @@ export default function Home() {
             isActive={isActive}
             setIsActive={setIsActive}
             setRealBedrockAnalysis={setRealBedrockAnalysis}
-            setRealRadarImage={setRealRadarImage}
             setWeatherData={setWeatherData}
+            setAnalysisRuntime={setAnalysisRuntime}
             language={language}
             t={t}
           />
@@ -410,10 +512,30 @@ export default function Home() {
 
       <audio ref={audioRef} className="hidden" playsInline />
 
+      {liveNotification && (
+        <div className="fixed left-1/2 bottom-6 -translate-x-1/2 z-50 w-[92%] max-w-md">
+          <div className="border border-black bg-white shadow-xl rounded-sm p-4 animate-[slideUp_280ms_ease-out]">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <p className="text-xs font-bold uppercase tracking-wider text-gray-900">{liveNotification.title}</p>
+                <p className="mt-2 text-sm text-gray-800 leading-relaxed">{liveNotification.body}</p>
+              </div>
+              <button
+                onClick={() => setLiveNotification(null)}
+                className="text-gray-500 hover:text-black text-xs font-mono"
+                aria-label="Dismiss notification"
+              >
+                CLOSE
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <footer className="mt-12 text-center text-xs text-gray-400 font-mono tracking-wide">
         <p>Built with ❤️ by</p>
         <p className="mt-1 text-gray-500 font-bold uppercase">Atharv Rawat • Sanidhya Bhatia • Deepesh Wadhwani</p>
-        <p className="mt-3 px-4 leading-relaxed">Built for the <strong>Amazon Nova AI Hackathon</strong> (Devpost)</p>
+        <p className="mt-2 px-4 leading-relaxed">for the <strong>Amazon Nova AI Hackathon</strong> (Devpost)</p>
         <a 
           href="https://github.com/atharvesting/canopy" 
           target="_blank" 

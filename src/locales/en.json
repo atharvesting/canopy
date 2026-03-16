@@ -16,6 +16,7 @@
   "unsupported": "Unsupported",
   "granted": "Granted",
   "denied": "Denied",
+  "error": "Error",
   "currentConditions": "Current Conditions",
   "wind": "WIND",
   "dir": "DIR",
@@ -31,6 +32,7 @@
   "serverCheck": "Are you sure local_server.py is running on port 8000?",
   "languageLabel": "Language",
   "fallbackAlert": "Live weather data received. AI assessment is temporarily offline. Please monitor conditions manually for your inventory.",
+  "fallbackAdvisory": "Advisory: Fallback logic was used. Cross-check severe weather with external trusted sources (IMD/local alerts) before making high-impact business decisions.",
   "stopAlert": "Stop",
   "weatherLabels": {
     "0": "Clear Sky",

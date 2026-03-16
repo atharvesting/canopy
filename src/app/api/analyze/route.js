@@ -107,6 +107,13 @@ const ALERT_RULES = {
 
 const STORM_CODES = [95, 96, 99];
 const RAIN_CODES = [51, 53, 55, 61, 63, 65, 80, 81, 82];
+const PRIMARY_ANALYZE_URL =
+    process.env.PRIMARY_ANALYZE_URL ||
+    process.env.BACKEND_ANALYZE_URL ||
+    process.env.FASTAPI_ANALYZE_URL ||
+    'http://127.0.0.1:8000/api/analyze';
+const PRIMARY_ANALYZE_TIMEOUT_MS = Number(process.env.PRIMARY_ANALYZE_TIMEOUT_MS || 12000);
+const DISABLE_PRIMARY_BACKEND = process.env.DISABLE_PRIMARY_BACKEND === 'true';
 
 function classifyWeather(weatherData) {
     const code = weatherData.weathercode || 0;
@@ -147,6 +154,61 @@ function generateAlert(weatherData, inventoryType, language = 'en') {
     };
 }
 
+function normalizeWeatherData(weatherData = {}, rawData = null) {
+    // Handle both fallback schema and Python backend schema from Open-Meteo current block.
+    const normalized = {
+        temperature: weatherData.temperature ?? weatherData.temperature_2m ?? 25,
+        windspeed: weatherData.windspeed ?? weatherData.wind_speed_10m ?? 0,
+        winddirection: weatherData.winddirection ?? weatherData.wind_direction_10m ?? 0,
+        weathercode: weatherData.weathercode ?? weatherData.weather_code ?? 0,
+        relative_humidity_2m: weatherData.relative_humidity_2m ?? 50,
+        apparent_temperature: weatherData.apparent_temperature ?? weatherData.temperature ?? weatherData.temperature_2m ?? 25
+    };
+
+    if (weatherData.temperature_max != null) normalized.temperature_max = weatherData.temperature_max;
+    if (weatherData.temperature_min != null) normalized.temperature_min = weatherData.temperature_min;
+    if (weatherData.hourly) normalized.hourly = weatherData.hourly;
+
+    if (rawData?.daily) {
+        if (normalized.temperature_max == null) {
+            normalized.temperature_max = rawData.daily.temperature_2m_max?.[0];
+        }
+        if (normalized.temperature_min == null) {
+            normalized.temperature_min = rawData.daily.temperature_2m_min?.[0];
+        }
+    }
+
+    if (!normalized.hourly && rawData?.hourly) {
+        normalized.hourly = rawData.hourly;
+    }
+
+    return normalized;
+}
+
+async function fetchPrimaryBackend(payload) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), PRIMARY_ANALYZE_TIMEOUT_MS);
+
+    try {
+        const resp = await fetch(PRIMARY_ANALYZE_URL, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+            signal: controller.signal,
+            cache: 'no-store'
+        });
+
+        if (!resp.ok) {
+            const txt = await resp.text();
+            throw new Error(`Primary backend failed: ${resp.status} ${txt}`);
+        }
+
+        return await resp.json();
+    } finally {
+        clearTimeout(timeout);
+    }
+}
+
 export async function POST(request) {
     try {
         const body = await request.json();
@@ -154,6 +216,33 @@ export async function POST(request) {
 
         const lat = latitude || 26.9124;
         const lon = longitude || 75.7873;
+
+        if (!DISABLE_PRIMARY_BACKEND) {
+            try {
+                const primaryResult = await fetchPrimaryBackend({
+                    latitude: lat,
+                    longitude: lon,
+                    inventory_type: inventory_type || 'Produce',
+                    language: language || 'en'
+                });
+
+                const normalizedPrimaryWeather = normalizeWeatherData(primaryResult.weather_data || {});
+
+                if (primaryResult.assessment && !primaryResult.assessment.error) {
+                    return NextResponse.json({
+                        assessment: primaryResult.assessment,
+                        radar_base64: primaryResult.radar_base64 || null,
+                        weather_data: normalizedPrimaryWeather,
+                        source: primaryResult.source || 'Primary Python/Bedrock Backend',
+                        fallback_used: false
+                    });
+                }
+
+                throw new Error('Primary backend returned empty/error assessment');
+            } catch (primaryErr) {
+                console.warn('Primary backend unavailable, using deterministic fallback:', primaryErr.message);
+            }
+        }
 
         // Updated to grab heat and humidity metrics
         const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,relative_humidity_2m,apparent_temperature,precipitation,weather_code,wind_speed_10m,wind_direction_10m&hourly=precipitation_probability,weathercode,temperature_2m&daily=temperature_2m_max,temperature_2m_min&timezone=auto&forecast_days=1`;
@@ -165,30 +254,16 @@ export async function POST(request) {
         
         const data = await response.json();
         
-        // Map the new current object to match the expected python structure
-        const weather_data = {
-            temperature: data.current?.temperature_2m || 25,
-            windspeed: data.current?.wind_speed_10m || 0,
-            winddirection: data.current?.wind_direction_10m || 0,
-            weathercode: data.current?.weather_code || 0,
-            relative_humidity_2m: data.current?.relative_humidity_2m || 50,
-            apparent_temperature: data.current?.apparent_temperature || 25
-        };
-        if (data.daily) {
-            weather_data.temperature_max = data.daily.temperature_2m_max?.[0];
-            weather_data.temperature_min = data.daily.temperature_2m_min?.[0];
-        }
-        if (data.hourly) {
-            weather_data.hourly = data.hourly;
-        }
+        const weather_data = normalizeWeatherData(data.current || {}, data);
 
         const assessment = generateAlert(weather_data, inventory_type || 'Produce', language);
 
         return NextResponse.json({
             assessment: assessment,
-            radar_base64: null, // Removed radar image
+            radar_base64: null,
             weather_data: weather_data,
-            source: "Next.js Edge API"
+            source: 'Next.js Fallback Rules Engine',
+            fallback_used: true
         });
 
     } catch (error) {

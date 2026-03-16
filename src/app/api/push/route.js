@@ -85,7 +85,7 @@ export async function POST(request) {
         
         // Trigger a test alert to all subscribed devices
         if (payload.action === 'trigger') {
-            const { title, body, subscription } = payload;
+            const { title, body, subscription, language } = payload;
 
             if (!vapidConfigured) {
                 return NextResponse.json(
@@ -101,7 +101,8 @@ export async function POST(request) {
             const notificationPayload = JSON.stringify({
                 title: title || 'Project Canopy Alert',
                 body: body || 'Extreme Heat Detected: Move all produce to shade immediately.',
-                data: { url: '/' }
+                language: language || 'en',
+                data: { url: '/', language: language || 'en' }
             });
 
             // If the client provided their subscription directly in the trigger request,

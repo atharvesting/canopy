@@ -26,7 +26,22 @@ self.addEventListener('push', function (event) {
     };
 
     const notificationPromise = self.registration.showNotification(title, options);
-    event.waitUntil(notificationPromise);
+    const clientBroadcastPromise = clients.matchAll({ type: 'window', includeUncontrolled: true })
+        .then((clientList) => {
+            for (const client of clientList) {
+                client.postMessage({
+                    type: 'push-notification',
+                    payload: {
+                        title,
+                        body: data.body,
+                        language: data.language || (data.data && data.data.language) || 'en',
+                        data: data.data || { url: '/' }
+                    }
+                });
+            }
+        });
+
+    event.waitUntil(Promise.all([notificationPromise, clientBroadcastPromise]));
 });
 
 self.addEventListener('notificationclick', function(event) {
