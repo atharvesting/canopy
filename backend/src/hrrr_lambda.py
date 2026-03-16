@@ -21,7 +21,7 @@ def fetch_open_meteo(lat, lon):
     """
     url = (
         f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}"
-        f"&current_weather=true"
+        f"&current=temperature_2m,relative_humidity_2m,apparent_temperature,precipitation,weather_code,wind_speed_10m"
         f"&hourly=precipitation_probability,weathercode,temperature_2m"
         f"&daily=temperature_2m_max,temperature_2m_min"
         f"&timezone=auto&forecast_days=1"
@@ -31,7 +31,9 @@ def fetch_open_meteo(lat, lon):
     try:
         with urllib.request.urlopen(req) as response:
             data = json.loads(response.read().decode())
-            current = data.get('current_weather', {})
+            
+            # Map new current object to expected dict
+            current = data.get('current', {})
             daily = data.get('daily', {})
             hourly = data.get('hourly', {})
             
@@ -87,14 +89,14 @@ def fetch_hrrr_and_generate_heatmap(lat, lon):
         y_slice = slice(nearest_y_idx - 25, nearest_y_idx + 25)
         x_slice = slice(nearest_x_idx - 25, nearest_x_idx + 25)
         
-        if 'VWSH_10_to_1000' in ds.variables:
-            wind_shear_data = ds['VWSH_10_to_1000'].isel(y=y_slice, x=x_slice).values
+        if 'TMP_surface' in ds.variables:
+            heat_data = ds['TMP_surface'].isel(y=y_slice, x=x_slice).values
             
             # Generate and save plot
             plt.figure(figsize=(6, 6))
-            plt.imshow(wind_shear_data, cmap='viridis', origin='lower')
-            plt.colorbar(label='Wind Shear')
-            plt.title(f'Wind Shear Heatmap\nLat: {lat}, Lon: {lon}')
+            plt.imshow(heat_data, cmap='inferno', origin='lower')
+            plt.colorbar(label='Surface Temperature (Heat Dome)')
+            plt.title(f'Surface Temperature Heatmap\nLat: {lat}, Lon: {lon}')
             plt.savefig(heatmap_path, bbox_inches='tight', dpi=100)
             plt.close()
             

@@ -60,13 +60,24 @@ export default function PushNotification({
             // 3. Subscribe to Push Manager
             const registration = await navigator.serviceWorker.getRegistration();
             if (registration) {
-              const publicVapidKey = 'BEl62iUYgUivxIkv69yViEuiBIa-Ib9-SkvMeAtA3LFgDzkrxZJjSgSnfckjBJuBkr3qBUYIHBQFLXYpPNs_Z2s';
+              const publicVapidKey = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY || 'BG8Fs1B8UUyLr6fBQj2MfagCQJ_6cR0R7v7vjAcFTYQzKZtP6X91ekVZU61xjiJexSSB3xatykmD8Jbyg1D3l-M';
               
               try {
                 pushSubscription = await registration.pushManager.subscribe({
                   userVisibleOnly: true,
                   applicationServerKey: urlBase64ToUint8Array(publicVapidKey)
                 });
+                
+                // POST subscription to our mock Push Route
+                await fetch('/api/push', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    action: 'subscribe',
+                    subscription: pushSubscription
+                  })
+                });
+                
               } catch (pushErr) {
                 console.warn('Push subscription failed (expected without DynamoDB), continuing anyway:', pushErr);
               }
@@ -111,6 +122,20 @@ export default function PushNotification({
       
       const apiResult = await response.json();
       console.log('Backend pipeline returned:', apiResult);
+      
+      // FIRE PUSH NOTIFICATION IMMEDIAITELY UPON ASSESSMENT SUCCESS
+      if (pushSubscription && apiResult.assessment && apiResult.assessment.mitigation_alert) {
+          fetch('/api/push', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                  action: 'trigger',
+                  title: `Canopy Warning: ${apiResult.assessment.urgency_level}`,
+                  body: apiResult.assessment.mitigation_alert,
+                  language: language
+              })
+          }).catch(err => console.error("Delayed test push failed", err));
+      }
       
       // Populate Dashboard UI state
       if (apiResult.assessment && !apiResult.assessment.error) {

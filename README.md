@@ -8,7 +8,7 @@ Built for the **Amazon Nova AI Hackathon** — *Multimodal Understanding Track*.
 
 ## The Problem
 
-Street vendors operate entirely at the mercy of the weather. A sudden storm, unexpected wind shear, or an hour of heavy rain can destroy a day's inventory — fresh produce, electronics, handmade goods. Their delicate means of earning a livelihood often puts them in terribly unfortunate positions of financial pressure. These vendors rarely have the technical literacy or device access to parse a NOAA forecast, let alone assess the specific risk their inventory possibly faces.
+Street vendors operate entirely at the mercy of the weather. A sudden storm, unexpected wind shear, or an hour of heavy rain can destroy a day's inventory. More chronically, extreme heatwaves and oppressive humidity destroy fresh produce, melt plastics, and create life-threatening conditions. Their delicate means of earning a livelihood often puts them in terribly unfortunate positions of financial pressure. These vendors rarely have the technical literacy or device access to parse a NOAA forecast, let alone assess the specific risk their inventory possibly faces.
 
 Weather apps tell you *what's coming*. They don't tell a vegetable vendor in Jaipur whether to pack up his stall right now.
 
@@ -22,7 +22,7 @@ Canopy is a **Progressive Web App** that gives street vendors a fast, hyperlocal
 
 A vendor taps **"Enable Alerts & Analyze"**, and within seconds they get:
 
-- **A live radar-style heatmap** built from NOAA HRRR wind shear data at their exact coordinates.
+- **A live radar-style heatmap** built from NOAA HRRR temperature data at their exact coordinates.
 - **An AI-generated risk assessment** from Amazon Nova 2 Lite — not generic weather advice, but *inventory-specific* reasoning. A produce vendor gets different guidance than an electronics seller.
 - **An urgency level** and two concrete mitigation steps, delivered in their regional language.
 - **A pinnable PWA** — home screen installable, push-capable, works on smoothly even on low to mid-range Android devices.
@@ -47,11 +47,11 @@ The full intended system has three distinct layers, each with a clear responsibi
 [FastAPI Backend / AWS Lambda]
       │
       ├──► NOAA HRRR (AWS Open Data, Zarr)
-      │         └── Wind shear slice → PNG heatmap
+      │         └── Surface Temp slice → PNG heatmap
       │
       ├──► AWS Bedrock: Nova Multimodal Embeddings
       │         └── Radar image → embedding vector
-      │                   └── Cosine similarity → historical storm retrieval
+      │                   └── Cosine similarity → historical extreme weather retrieval
       │
       ├──► Open-Meteo API
       │         └── Current weather JSON at coordinates
@@ -73,12 +73,16 @@ PWA infrastructure uses `next-pwa` with a custom `manifest.json` and a Workbox-p
 
 **HRRR data pipeline:**
 - Uses `s3fs` + `xarray` to read NOAA HRRR Zarr data directly from `s3://hrrrzarr/` via anonymous AWS Open Data access.
-- Extracts a 2D slice of vertical wind shear (`VWSH_10_to_1000`) centered on the vendor's location.
-- Renders the slice as a PNG heatmap via Matplotlib.
+- Extracts a 2D slice of surface temperature (`TMP_surface`) centered on the vendor's location.
+- Renders the slice as a PNG heatmap via Matplotlib using the `inferno` colormap.
 
-**Visual RAG pipeline:**
+**Visual RAG pipeline (Core Technology Demo):**
 - The radar PNG is embedded using **Amazon Nova Multimodal Embeddings** (`amazon.nova-2-multimodal-embeddings-v1:0`) via AWS Bedrock Runtime.
-- The resulting vector is compared against a precomputed set of historical radar embeddings stored in `historical_vectors.json`, using cosine similarity to retrieve the most analogous past storm scenario.
+- **The Historical Weather Database:** We constructed `historical_vectors.json`, a concrete vector storage map matching historical extreme weather events from the Indian Meteorological Department (IMD) to multimodal embeddings. For example, it encodes events like:
+  - **IMD_HW_2015_AP_TS**: 2015 Andhra Pradesh Heatwave (Mitigation: soaking jute bags)
+  - **IMD_HW_2022_NW**: 2022 Northwest Dry Heat Dome (Mitigation: double-layered reflective tarps)
+  - **IMD_HW_2023_UP_BIHAR**: 2023 UP/Bihar Humid Heatwave (Mitigation: blocking open-air meat cuts/fruit)
+- The resulting vector is compared against these precomputed historical radar embeddings stored in `historical_vectors.json`. Using cosine similarity, the system retrieves the most analogous past heatwave or storm scenario, grounding the AI in actual documented mitigation strategies.
 - This retrieved context is passed downstream to the reasoning layer.
 
 **Reasoning layer (`bedrock_nova.py`):**
@@ -149,7 +153,7 @@ Strict Chrome VAPID validation was crashing the app on certain Android configura
 
 Amazon Nova is central to what makes Canopy more than a weather widget.
 
-**Nova Multimodal Embeddings** converts a radar heatmap image into a vector that captures the *structure* of the storm pattern — not just metadata. This lets us do visual similarity search against historical storm events, grounding the AI's advice in real past outcomes rather than generic weather knowledge.
+**Nova Multimodal Embeddings** converts a radar heatmap image into a vector that captures the *structure* of the heat pattern or weather event — not just metadata. This lets us do visual similarity search against historical Indian weather events (like the 2015 Andhra-Telangana Heatwave), grounding the AI's advice in real historical mitigation tactics (e.g. adopting early morning operating hours and soaking jute bags) rather than generic weather knowledge.
 
 **Nova 2 Lite** reasons over a genuinely multimodal input: a PNG image of the current radar, a JSON payload of live weather variables, retrieved historical context, and the vendor's specific inventory type. The output is not a weather summary — it's a risk decision with urgency and actionable steps, specific to what that vendor is selling today.
 
