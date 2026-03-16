@@ -1,4 +1,4 @@
-# 🌿 Project Canopy
+# ☂️ Project Canopy
 
 > Early-warning weather risk intelligence for street vendors and small outdoor businesses.
 
@@ -22,10 +22,10 @@ Canopy is a **Progressive Web App** that gives street vendors a fast, hyperlocal
 
 A vendor taps **"Enable Alerts & Analyze"**, and within seconds they get:
 
-- **A live radar-style heatmap** built from NOAA HRRR temperature data at their exact coordinates.
-- **An AI-generated risk assessment** from Amazon Nova 2 Lite — not generic weather advice, but *inventory-specific* reasoning. A produce vendor gets different guidance than an electronics seller.
+- **HRRR-derived spatial heatmap context** generated in the backend for AI retrieval and reasoning.
+- **An AI-generated risk assessment** from Amazon Nova 2 Lite with *inventory-specific* reasoning. A produce vendor gets different guidance than an electronics seller.
 - **An urgency level** and two concrete mitigation steps, delivered in their regional language.
-- **A pinnable PWA** — home screen installable, push-capable, works on smoothly even on low to mid-range Android devices.
+- **A pinnable PWA** — home screen installable, push-capable, works on smoothly on low and mid-range Android devices.
 
 ---
 
@@ -57,7 +57,7 @@ The full intended system has three distinct layers, each with a clear responsibi
       │         └── Current weather JSON at coordinates
       │
       └──► AWS Bedrock: Nova 2 Lite (Converse API)
-                └── Multimodal prompt: inventory + weather + historical context + radar image
+                └── Multimodal prompt: inventory + weather + historical context
                           └── JSON response: urgency_level + mitigation_alert
 ```
 
@@ -99,21 +99,19 @@ PWA infrastructure uses `next-pwa` with a custom `manifest.json` and a Workbox-p
 
 ## Demo Resilience — The Hackathon Reality
 
-This section is worth being transparent about.
-
-Building on AWS Bedrock in a hackathon introduces a hard constraint: AWS Bedrock constraints. Vercel's serverless functions have a 250MB deployment limit, which breaks Python data science packages like `xarray` and `zarr`. We had the architecture, we had the code, but we couldn't guarantee it would be live for judges.
+ Vercel's serverless functions have a 250MB deployment limit, which breaks Python data science packages like `xarray` and `zarr`. We had the architecture, we had the code, but we couldn't guarantee it would be live for judges. Also, Bedrock access is flaky for new accounts. Testing was actually impossible.
 
 So we engineered around it.
 
-### Edge API Fallback
+### API Fallback Path
 
-We built a **Next.js Edge API route (`/api/analyze/route.js`)** that runs entirely at the edge, outside Vercel's Python size constraints. When the full AWS pipeline is unavailable, the app automatically falls back to a deterministic rule-engine built on Open-Meteo data.
+We built a **Next.js API fallback route (`/api/analyze/route.js`)** to avoid Python packaging limits in the Vercel deployment path. When the full AWS pipeline is unavailable, the app automatically falls back to a deterministic rule-engine built on Open-Meteo data.
 
-The fallback isn't a stub — it produces real, inventory-specific guidance using structured weather variables (wind speed, precipitation probability, temperature deltas). The transition between the full pipeline and the fallback is seamless to the user.
+The fallback isn't a placeholder. It actually produces real, inventory-specific guidance using structured weather variables (wind speed, precipitation probability, temperature deltas). The transition between the full pipeline and the fallback is seamless to the user.
 
 ### 9-Language Localization
 
-One of the most important features — and one we almost cut — is full Indic language support. The AI response, urgency level, weather labels, and UI copy are all translated across:
+One of the most important and non-negotiable features is full Indic language support. The AI response, urgency level, weather labels, and UI copy are all translated across:
 
 **Hindi, Tamil, Telugu, Bengali, Marathi, Kannada, Gujarati, Malayalam, and English**
 
@@ -127,7 +125,7 @@ We fixed this by building a **server-side TTS proxy (`/api/tts/route.js`)** that
 
 ### Graceful Push API Handling
 
-Strict Chrome VAPID validation was crashing the app on certain Android configurations. We wrapped the entire push subscription flow in `DOMException` error boundaries — if the device rejects the subscription for any reason, the core app experience continues without interruption. The alert functionality degrades gracefully; the risk assessment always works.
+Strict Chrome VAPID validation was crashing the app on certain Android configurations. We wrapped the entire push subscription flow in `DOMException` error boundaries. If the device rejects the subscription for any reason, the core app experience continues without interruption. The alert functionality degrades gracefully; the risk assessment always works.
 
 ---
 
@@ -153,11 +151,11 @@ Strict Chrome VAPID validation was crashing the app on certain Android configura
 
 Amazon Nova is central to what makes Canopy more than a weather widget.
 
-**Nova Multimodal Embeddings** converts a radar heatmap image into a vector that captures the *structure* of the heat pattern or weather event — not just metadata. This lets us do visual similarity search against historical Indian weather events (like the 2015 Andhra-Telangana Heatwave), grounding the AI's advice in real historical mitigation tactics (e.g. adopting early morning operating hours and soaking jute bags) rather than generic weather knowledge.
+**Nova Multimodal Embeddings** converts a radar heatmap image into a vector that captures the *structure* of the heat pattern or weather event, not just metadata. This lets us do visual similarity search against historical Indian weather events (like the 2015 Andhra-Telangana Heatwave), grounding the AI's advice in real historical mitigation tactics (e.g. adopting early morning operating hours and soaking jute bags) rather than generic weather knowledge.
 
-**Nova 2 Lite** reasons over a genuinely multimodal input: a PNG image of the current radar, a JSON payload of live weather variables, retrieved historical context, and the vendor's specific inventory type. The output is not a weather summary — it's a risk decision with urgency and actionable steps, specific to what that vendor is selling today.
+**Nova 2 Lite** reasons over a genuinely multimodal input: a PNG image of the current radar, a JSON payload of live weather variables, retrieved historical context, and the vendor's specific inventory type. The output is a risk decision with urgency and actionable steps, specific to what that vendor is selling today.
 
-The combination — visual retrieval feeding a multimodal reasoner — is what we're calling a **Visual RAG pipeline**. It's the architectural idea we're most proud of in this project.
+The combination of a visual retrieval feeding a multimodal reasoner is what we're calling a **Visual RAG pipeline**. It's the architectural idea we're most proud of in this project.
 
 ---
 
@@ -174,11 +172,11 @@ The combination — visual retrieval feeding a multimodal reasoner — is what w
 
 ## What We Learned
 
-The HRRR Zarr pipeline was harder than expected — reading partial chunks from a remote Zarr store over anonymous S3 efficiently requires understanding xarray's lazy loading model in ways the documentation doesn't make obvious.
+The HRRR Zarr pipeline was harder than expected - reading partial chunks from a remote Zarr store over anonymous S3 efficiently requires understanding xarray's lazy loading model in ways the documentation doesn't make obvious.
 
 The 9-language TTS problem turned out to be the most genuinely interesting engineering challenge of the weekend. Indic text on Android is a surprisingly unsolved UX problem in the web ecosystem, and the server-side audio proxy is a pattern we hadn't seen documented anywhere.
 
-And honestly — building a fallback system that's as good as your primary system is harder than just building the primary system. The Edge fallback forced us to think clearly about what the AI pipeline was actually adding, and make sure that value was expressible in deterministic logic too.
+Moreover, the Edge fallback forced us to think clearly about what the AI pipeline was actually adding, and make sure that value was expressible in deterministic logic too.
 
 ---
 

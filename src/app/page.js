@@ -166,10 +166,7 @@ export default function Home() {
       return;
     }
 
-    const fullTextToPlay = analysisRuntime.fallbackUsed
-      ? `${warningText} ${advisoryText}`
-      : warningText;
-    playTtsText(fullTextToPlay, setIsSpeaking);
+    playTtsText(warningText, setIsSpeaking);
   };
 
   const handlePlayAdvisoryVoiceAlert = () => {
