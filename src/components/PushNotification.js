@@ -63,11 +63,20 @@ export default function PushNotification({
               const publicVapidKey = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY || 'BG8Fs1B8UUyLr6fBQj2MfagCQJ_6cR0R7v7vjAcFTYQzKZtP6X91ekVZU61xjiJexSSB3xatykmD8Jbyg1D3l-M';
               
               try {
+                // First, check if there's an existing subscription and unsubscribe to ensure clean slate with new keys
+                const existingSub = await registration.pushManager.getSubscription();
+                if (existingSub) {
+                    console.log("Unsubscribing from old push manager key...");
+                    await existingSub.unsubscribe();
+                }
+
+                console.log("Subscribing to PushManager...");
                 pushSubscription = await registration.pushManager.subscribe({
                   userVisibleOnly: true,
                   applicationServerKey: urlBase64ToUint8Array(publicVapidKey)
                 });
-                
+                console.log("Successfully registered new push subscription!");
+
                 // POST subscription to our mock Push Route
                 await fetch('/api/push', {
                   method: 'POST',
@@ -125,17 +134,24 @@ export default function PushNotification({
       
       // FIRE PUSH NOTIFICATION IMMEDIAITELY UPON ASSESSMENT SUCCESS
       if (pushSubscription && apiResult.assessment && apiResult.assessment.mitigation_alert) {
-          fetch('/api/push', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                  action: 'trigger',
-                  title: `Canopy Warning: ${apiResult.assessment.urgency_level}`,
-                  body: apiResult.assessment.mitigation_alert,
-                  language: language,
-                  subscription: pushSubscription
-              })
-          }).catch(err => console.error("Delayed test push failed", err));
+          console.log("Triggering Push API...");
+          try {
+              const pushResp = await fetch('/api/push', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                      action: 'trigger',
+                      title: `Canopy Warning: ${apiResult.assessment.urgency_level}`,
+                      body: apiResult.assessment.mitigation_alert,
+                      language: language,
+                      subscription: pushSubscription
+                  })
+              });
+              const pushData = await pushResp.json();
+              console.log("Push API Trigger Response:", pushData);
+          } catch(err) {
+              console.error("Delayed test push failed", err);
+          }
       }
       
       // Populate Dashboard UI state

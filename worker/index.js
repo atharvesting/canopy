@@ -17,8 +17,6 @@ self.addEventListener('push', function (event) {
     const title = data.title;
     const options = {
         body: data.body,
-        icon: data.icon || '/icon-192x192.png',
-        badge: '/icon-192x192.png',
         vibrate: [200, 100, 200, 100, 200, 100, 200], // Aggressive ringing vibration pattern
         requireInteraction: true, // Forces the user to dismiss it
         data: data.data || { url: '/' },

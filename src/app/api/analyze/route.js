@@ -169,6 +169,7 @@ export async function POST(request) {
         const weather_data = {
             temperature: data.current?.temperature_2m || 25,
             windspeed: data.current?.wind_speed_10m || 0,
+            winddirection: data.current?.wind_direction_10m || 0,
             weathercode: data.current?.weather_code || 0,
             relative_humidity_2m: data.current?.relative_humidity_2m || 50,
             apparent_temperature: data.current?.apparent_temperature || 25

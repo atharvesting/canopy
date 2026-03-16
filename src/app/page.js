@@ -413,6 +413,7 @@ export default function Home() {
       <footer className="mt-12 text-center text-xs text-gray-400 font-mono tracking-wide">
         <p>Built with ❤️ by</p>
         <p className="mt-1 text-gray-500 font-bold uppercase">Atharv Rawat • Sanidhya Bhatia • Deepesh Wadhwani</p>
+        <p className="mt-3 px-4 leading-relaxed">Built for the <strong>Amazon Nova AI Hackathon</strong> (Devpost)</p>
         <a 
           href="https://github.com/atharvesting/canopy" 
           target="_blank" 

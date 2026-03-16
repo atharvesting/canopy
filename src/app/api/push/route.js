@@ -48,7 +48,6 @@ export async function POST(request) {
             const notificationPayload = JSON.stringify({
                 title: title || 'Project Canopy Alert',
                 body: body || 'Extreme Heat Detected: Move all produce to shade immediately.',
-                icon: '/icon-192x192.png',
                 data: { url: '/' }
             });
 
@@ -56,10 +55,14 @@ export async function POST(request) {
             // we send to it immediately (bypassing the need for in-memory persistence on serverless)
             if (subscription) {
                 console.log("Sending push directly to provided subscription in trigger payload!");
-                await webpush.sendNotification(subscription, notificationPayload).catch(err => {
-                    console.error('Failed to send to direct sub', err);
-                });
-                return NextResponse.json({ success: true, message: `Sent notification right back to client device` });
+                try {
+                    const pushResult = await webpush.sendNotification(subscription, notificationPayload);
+                    console.log("Push sent successfully!", pushResult.statusCode);
+                    return NextResponse.json({ success: true, message: `Sent notification right back to client device` });
+                } catch (err) {
+                    console.error('Failed to send to direct sub', err.statusCode, err.body, err);
+                    return NextResponse.json({ success: false, error: err.message }, { status: 500 });
+                }
             }
 
             // Fallback: sweep any existing in-memory subscriptions
