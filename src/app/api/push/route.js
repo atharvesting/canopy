@@ -1,11 +1,21 @@
 import { NextResponse } from 'next/server';
 import webpush from 'web-push';
 
-webpush.setVapidDetails(
-    process.env.VAPID_SUBJECT || 'mailto:test@example.com',
-    process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY,
-    process.env.VAPID_PRIVATE_KEY
-);
+export const dynamic = 'force-dynamic';
+
+if (process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY) {
+    try {
+        webpush.setVapidDetails(
+            process.env.VAPID_SUBJECT || 'mailto:test@example.com',
+            process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY,
+            process.env.VAPID_PRIVATE_KEY
+        );
+    } catch (e) {
+        console.warn("Failed to set VAPID details:", e.message);
+    }
+} else {
+    console.warn("VAPID keys are missing. Push notifications will be disabled. Set NEXT_PUBLIC_VAPID_PUBLIC_KEY and VAPID_PRIVATE_KEY in Vercel.");
+}
 
 // We'll store subscriptions in memory for the demo
 // In production this would be moved to a DB
