@@ -3,23 +3,51 @@ import webpush from 'web-push';
 
 export const dynamic = 'force-dynamic';
 
-if (process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY) {
+const vapidPublicKey = process.env.VAPID_PUBLIC_KEY || process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY;
+const vapidPrivateKey = process.env.VAPID_PRIVATE_KEY;
+const vapidSubject = process.env.VAPID_SUBJECT || 'mailto:test@example.com';
+
+let vapidConfigured = false;
+let vapidConfigError = null;
+
+if (vapidPublicKey && vapidPrivateKey) {
     try {
-        webpush.setVapidDetails(
-            process.env.VAPID_SUBJECT || 'mailto:test@example.com',
-            process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY,
-            process.env.VAPID_PRIVATE_KEY
-        );
+        webpush.setVapidDetails(vapidSubject, vapidPublicKey, vapidPrivateKey);
+        vapidConfigured = true;
     } catch (e) {
-        console.warn("Failed to set VAPID details:", e.message);
+        vapidConfigError = e.message;
+        console.warn('Failed to set VAPID details:', e.message);
     }
 } else {
-    console.warn("VAPID keys are missing. Push notifications will be disabled. Set NEXT_PUBLIC_VAPID_PUBLIC_KEY and VAPID_PRIVATE_KEY in Vercel.");
+    vapidConfigError = 'Missing VAPID keys';
+    console.warn('VAPID keys are missing. Push notifications will be disabled. Set VAPID_PUBLIC_KEY (or NEXT_PUBLIC_VAPID_PUBLIC_KEY) and VAPID_PRIVATE_KEY in Vercel.');
 }
+
+const keyFingerprint = (key) => {
+    if (!key || key.length < 12) return 'missing';
+    return `${key.slice(0, 6)}...${key.slice(-6)}`;
+};
+
+const pushDiagnostics = () => ({
+    vapidConfigured,
+    vapidConfigError,
+    hasPublicKey: Boolean(vapidPublicKey),
+    hasPrivateKey: Boolean(vapidPrivateKey),
+    publicKeyFingerprint: keyFingerprint(vapidPublicKey),
+    privateKeyFingerprint: keyFingerprint(vapidPrivateKey),
+    subject: vapidSubject
+});
 
 // We'll store subscriptions in memory for the demo
 // In production this would be moved to a DB
 const subscriptions = new Set();
+
+export async function GET() {
+    return NextResponse.json({
+        ok: true,
+        diagnostics: pushDiagnostics()
+    });
+}
 
 export async function POST(request) {
     try {
@@ -37,13 +65,25 @@ export async function POST(request) {
             
             return NextResponse.json({ 
                 success: true, 
-                message: 'Subscription fully registered' 
+                message: 'Subscription fully registered',
+                diagnostics: pushDiagnostics()
             });
         }
         
         // Trigger a test alert to all subscribed devices
         if (payload.action === 'trigger') {
             const { title, body, subscription } = payload;
+
+            if (!vapidConfigured) {
+                return NextResponse.json(
+                    {
+                        success: false,
+                        error: 'Push server is not configured with valid VAPID credentials.',
+                        diagnostics: pushDiagnostics()
+                    },
+                    { status: 503 }
+                );
+            }
 
             const notificationPayload = JSON.stringify({
                 title: title || 'Project Canopy Alert',
@@ -58,10 +98,26 @@ export async function POST(request) {
                 try {
                     const pushResult = await webpush.sendNotification(subscription, notificationPayload);
                     console.log("Push sent successfully!", pushResult.statusCode);
-                    return NextResponse.json({ success: true, message: `Sent notification right back to client device` });
+                    return NextResponse.json({
+                        success: true,
+                        message: 'Sent notification right back to client device',
+                        statusCode: pushResult.statusCode,
+                        diagnostics: pushDiagnostics()
+                    });
                 } catch (err) {
                     console.error('Failed to send to direct sub', err.statusCode, err.body, err);
-                    return NextResponse.json({ success: false, error: err.message }, { status: 500 });
+                    return NextResponse.json(
+                        {
+                            success: false,
+                            error: err.message,
+                            statusCode: err.statusCode || 500,
+                            providerError: err.body || null,
+                            endpoint: err.endpoint || null,
+                            diagnostics: pushDiagnostics(),
+                            hint: '401 unauthenticated from FCM usually means missing or invalid VAPID Authorization header.'
+                        },
+                        { status: err.statusCode || 500 }
+                    );
                 }
             }
 
@@ -83,7 +139,8 @@ export async function POST(request) {
             
             return NextResponse.json({ 
                 success: true, 
-                message: `Sent ${promises.length} notifications` 
+                message: `Sent ${promises.length} notifications`,
+                diagnostics: pushDiagnostics()
             });
         }
         
@@ -91,6 +148,6 @@ export async function POST(request) {
 
     } catch (error) {
         console.error('Push API Error:', error);
-        return NextResponse.json({ error: error.message }, { status: 500 });
+        return NextResponse.json({ error: error.message, diagnostics: pushDiagnostics() }, { status: 500 });
     }
 }

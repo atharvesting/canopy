@@ -32,6 +32,17 @@ export default function PushNotification({
 }) {
   const [isProcessing, setIsProcessing] = useState(false);
 
+  const readResponseError = async (resp) => {
+    let details = '';
+    try {
+      const json = await resp.json();
+      details = json?.error || json?.providerError || JSON.stringify(json);
+    } catch {
+      details = await resp.text();
+    }
+    return `${resp.status} ${resp.statusText}${details ? ` - ${details}` : ''}`;
+  };
+
   const handleEnableAlerts = async () => {
     setIsProcessing(true);
     try {
@@ -58,27 +69,30 @@ export default function PushNotification({
 
           if (perm === 'granted') {
             // 3. Subscribe to Push Manager
-            const registration = await navigator.serviceWorker.getRegistration();
+            const registration = await navigator.serviceWorker.ready;
             if (registration) {
-              const publicVapidKey = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY || 'BG8Fs1B8UUyLr6fBQj2MfagCQJ_6cR0R7v7vjAcFTYQzKZtP6X91ekVZU61xjiJexSSB3xatykmD8Jbyg1D3l-M';
+              const publicVapidKey = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY;
+
+              if (!publicVapidKey) {
+                throw new Error('NEXT_PUBLIC_VAPID_PUBLIC_KEY is missing in deployed environment.');
+              }
               
               try {
-                // First, check if there's an existing subscription and unsubscribe to ensure clean slate with new keys
                 const existingSub = await registration.pushManager.getSubscription();
                 if (existingSub) {
-                    console.log("Unsubscribing from old push manager key...");
-                    await existingSub.unsubscribe();
+                  // Reuse existing subscription when available to avoid unnecessary churn/races.
+                  pushSubscription = existingSub;
+                } else {
+                  console.log("Subscribing to PushManager...");
+                  pushSubscription = await registration.pushManager.subscribe({
+                    userVisibleOnly: true,
+                    applicationServerKey: urlBase64ToUint8Array(publicVapidKey)
+                  });
+                  console.log("Successfully registered new push subscription!");
                 }
 
-                console.log("Subscribing to PushManager...");
-                pushSubscription = await registration.pushManager.subscribe({
-                  userVisibleOnly: true,
-                  applicationServerKey: urlBase64ToUint8Array(publicVapidKey)
-                });
-                console.log("Successfully registered new push subscription!");
-
                 // POST subscription to our mock Push Route
-                await fetch('/api/push', {
+                const subResp = await fetch('/api/push', {
                   method: 'POST',
                   headers: { 'Content-Type': 'application/json' },
                   body: JSON.stringify({
@@ -86,16 +100,24 @@ export default function PushNotification({
                     subscription: pushSubscription
                   })
                 });
+
+                if (!subResp.ok) {
+                  throw new Error(`Subscription registration failed: ${await readResponseError(subResp)}`);
+                }
                 
               } catch (pushErr) {
-                console.warn('Push subscription failed (expected without DynamoDB), continuing anyway:', pushErr);
+                setNotificationStatus('Error');
+                console.warn('Push subscription failed:', pushErr);
+                alert('Push subscription failed. Please retry after refreshing the app.\n\n' + (pushErr?.message || String(pushErr)));
               }
             } else {
               console.warn('No service worker registration found. Skipping push subscription.');
+              setNotificationStatus('Error');
             }
           }
         } catch (err) {
           console.warn('Notification permission issue:', err);
+          setNotificationStatus('Error');
         }
       } else {
         setNotificationStatus('Unsupported');
@@ -147,10 +169,16 @@ export default function PushNotification({
                       subscription: pushSubscription
                   })
               });
+
+                    if (!pushResp.ok) {
+                    throw new Error(`Push trigger failed: ${await readResponseError(pushResp)}`);
+                    }
+
               const pushData = await pushResp.json();
               console.log("Push API Trigger Response:", pushData);
           } catch(err) {
               console.error("Delayed test push failed", err);
+                    alert('Push send failed.\n\n' + (err?.message || String(err)));
           }
       }
       
